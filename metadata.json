@@ -1,0 +1,7 @@
+{
+  "name": "WorkLink",
+  "description": "A hyperlocal, AI-assisted marketplace connecting providers needing help with workers looking for nearby opportunities.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
