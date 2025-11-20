@@ -1,11 +1,12 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { User, UserRole, Task, TaskStatus, TaskCategory, AIAnalysisResult, Notification, AppliedWorker } from './types';
 import { INITIAL_TASKS, MOCK_NOTIFICATIONS, MOCK_USER } from './services/mockData';
 import { analyzeTaskDescription } from './services/geminiService';
-import { auth, db, isConfigured } from './services/authService';
+import { auth, db, storage, isConfigured } from './services/authService';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, updateDoc, collection, query, onSnapshot, arrayUnion } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import Navigation from './components/Navigation';
 import TaskCard from './components/TaskCard';
 import MapVisualizer from './components/MapVisualizer';
@@ -14,7 +15,7 @@ import {
   ChevronLeft, Briefcase, Lock, Mail, User as UserIcon, 
   Bell, LogOut, Edit3, ChevronRight, Settings, Shield, Clock, DollarSign,
   Hammer, Truck, Package, Smartphone, Moon, LogIn, Search, Navigation as NavIcon, HelpCircle, FileText,
-  Users, PlayCircle, Phone, UserPlus, PlusCircle, PhoneCall
+  Users, PlayCircle, Phone, UserPlus, PlusCircle, PhoneCall, Camera, Trash2
 } from 'lucide-react';
 
 // --- Utilities ---
@@ -44,6 +45,12 @@ const getFirebaseErrorMessage = (error: any) => {
   if (code === 'auth/weak-password') return 'Password is too weak.';
   if (code === 'auth/missing-password') return 'Please enter a password.';
   return error.message || 'Authentication failed. Please try again.';
+};
+
+const getAvatarUrl = (user: User | null | undefined) => {
+    if (!user) return 'https://ui-avatars.com/api/?name=User&background=random';
+    if (user.photoURL && user.photoURL.trim() !== '') return user.photoURL;
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || 'User')}&background=random`;
 };
 
 // --- Shared Components ---
@@ -110,7 +117,7 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
   const [formData, setFormData] = useState({ email: '', password: '', name: '', phone: '' });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tempUser, setTempUser] = useState<any>(null); // Stores user data temporarily before role selection
+  const [tempUser, setTempUser] = useState<any>(null); 
 
   const validateInputs = (type: 'login' | 'signup') => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -142,34 +149,25 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
         const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
         const uid = userCredential.user.uid;
         
-        // Fetch user profile to check role
         const userDoc = await getDoc(doc(db, 'users', uid));
         
         if (userDoc.exists()) {
           const userData = userDoc.data();
           if (userData.role) {
-            // Role exists, login complete
             onComplete({ id: uid, ...userData } as User);
           } else {
-            // Role missing, redirect to selector
             setTempUser({ id: uid, ...userData });
             setStep('role_selection');
           }
         } else {
-           // User auth exists but no firestore doc? Treat as new user needing role
            setTempUser({ id: uid, email: formData.email });
            setStep('role_selection');
         }
       } else {
-        // Mock Mode (Fallback if keys missing in preview)
         await new Promise(resolve => setTimeout(resolve, 1000));
-        // Simulate strict check in mock mode
         if (formData.email === 'test@example.com' && formData.password === 'password') {
-            // Mock user has role
             onComplete(MOCK_USER); 
         } else {
-            // Simulate finding user but no role or just login success -> select role
-            // For the sake of flow, let's say any other valid login goes to role selection
             setTempUser({ id: 'mock-id', email: formData.email, name: 'Mock User' });
             setStep('role_selection');
         }
@@ -195,17 +193,16 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
         const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
         const uid = userCredential.user.uid;
         
-        // Create basic user doc WITHOUT role
         const newUserBase = {
             id: uid,
             name: formData.name,
             email: formData.email,
             phone: formData.phone,
-            location_lat: 40.7128, // Default to NYC for demo
+            location_lat: 40.7128, 
             location_lng: -74.0060,
             address: 'New User Address',
             completedTasks: 0,
-            photoURL: `https://ui-avatars.com/api/?name=${formData.name}&background=random`,
+            photoURL: `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.name)}&background=random`,
             createdAt: Date.now()
         };
         
@@ -214,7 +211,6 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
         setTempUser(newUserBase);
         setStep('role_selection');
       } else {
-        // Mock Mode
         await new Promise(resolve => setTimeout(resolve, 1000));
         const mockNewUser = {
             id: `mock-${Date.now()}`,
@@ -225,7 +221,7 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
             location_lng: -74.0060,
             address: 'Mock Address',
             completedTasks: 0,
-            photoURL: `https://ui-avatars.com/api/?name=${formData.name}&background=random`
+            photoURL: `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.name)}&background=random`
         };
         setTempUser(mockNewUser);
         setStep('role_selection');
@@ -245,7 +241,7 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
         const finalUser: User = {
             ...tempUser,
             role: role,
-            rating: role === UserRole.WORKER ? 5.0 : undefined, // Only workers have ratings initially
+            rating: role === UserRole.WORKER ? 5.0 : undefined,
             skills: []
         };
 
@@ -264,7 +260,6 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
      }
   };
 
-  // 🧑‍💼 Step 3: Role Selection Screen
   if (step === 'role_selection') {
      return (
         <div className="flex flex-col h-full p-6 pt-20 bg-[#0B0F19] animate-in fade-in items-center justify-center">
@@ -316,7 +311,6 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
      );
   }
 
-  // 📝 Step 2: Clean Normal Sign-Up Form
   if (step === 'signup') {
       return (
         <div className="flex flex-col h-full p-6 pt-20 bg-[#0B0F19] overflow-y-auto animate-in slide-in-from-right">
@@ -352,7 +346,6 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
       );
   }
 
-  // 🔑 Step 1: Login Screen
   return (
       <div className="flex flex-col h-full p-6 justify-center bg-[#0B0F19] animate-in fade-in">
           <div className="mb-10 text-center">
@@ -408,6 +401,49 @@ const App = () => {
   const [analyzedTask, setAnalyzedTask] = useState<AIAnalysisResult | null>(null);
   const [isEditingJob, setIsEditingJob] = useState(false);
 
+  // Profile Upload State
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  // --- Real-time Listeners ---
+  useEffect(() => {
+    if (isConfigured && db && user) {
+      // Listen for tasks
+      const q = query(collection(db, "tasks"));
+      const unsubscribeTasks = onSnapshot(q, (snapshot) => {
+        const loadedTasks: Task[] = [];
+        snapshot.forEach((doc) => {
+           const data = doc.data() as any;
+           // Calculate distance immediately for valid data
+           const dist = calculateDistance(user.location_lat, user.location_lng, data.location_lat, data.location_lng);
+           loadedTasks.push({ id: doc.id, ...data, distanceKm: dist } as Task);
+        });
+        // Sort by creation date (newest first)
+        loadedTasks.sort((a, b) => b.createdAt - a.createdAt);
+        
+        // If we have data from Firestore, use it.
+        if (loadedTasks.length > 0) {
+             setTasks(loadedTasks);
+        }
+      });
+
+      // Listen for User Data Changes (Real-time sync for profile photo and stats)
+      const userRef = doc(db, "users", user.id);
+      const unsubscribeUser = onSnapshot(userRef, (doc) => {
+          if (doc.exists()) {
+              const userData = doc.data() as User;
+              // Only update if there are meaningful changes to avoid loops
+              setUser(prev => prev ? { ...prev, ...userData } : userData);
+          }
+      });
+
+      return () => {
+        unsubscribeTasks();
+        unsubscribeUser();
+      };
+    }
+  }, [user?.id]); // Only re-subscribe if user ID changes
+
   // Derived Data
   const filteredTasks = useMemo(() => {
     let result = tasks;
@@ -420,55 +456,57 @@ const App = () => {
   const myJobs = useMemo(() => {
     if (!user) return [];
     if (user.role === UserRole.WORKER) {
-        // For workers: 
-        // ASSIGNED = jobs where they are APPLIED or ASSIGNED/IN_PROGRESS
-        // ONGOING = job status IN_PROGRESS and they are the worker
-        // COMPLETED = job status COMPLETED and they are the worker
-        if (activeTab === 'ASSIGNED') {
-            return tasks.filter(t => 
-                (t.status === TaskStatus.APPLIED || t.status === TaskStatus.ASSIGNED || t.status === TaskStatus.IN_PROGRESS) && 
-                t.applicants?.some(a => a.workerId === user.id)
-            );
-        }
-        if (activeTab === 'ONGOING') return tasks.filter(t => t.status === TaskStatus.IN_PROGRESS && t.workerId === user.id);
-        if (activeTab === 'COMPLETED') return tasks.filter(t => t.status === TaskStatus.COMPLETED && t.workerId === user.id);
-        return [];
+        return tasks.filter(t => {
+             const isApplicant = t.applicants?.some(a => a.workerId === user.id);
+             const isAssigned = t.workerId === user.id;
+             return isApplicant || isAssigned;
+        });
     } else {
-        // Provider Logic
-        if (activeTab === 'ASSIGNED') return tasks.filter(t => t.providerId === user.id && (t.status === TaskStatus.OPEN || t.status === TaskStatus.APPLIED));
-        if (activeTab === 'ONGOING') return tasks.filter(t => t.providerId === user.id && t.status === TaskStatus.IN_PROGRESS);
-        if (activeTab === 'COMPLETED') return tasks.filter(t => t.providerId === user.id && t.status === TaskStatus.COMPLETED);
         return tasks.filter(t => t.providerId === user.id);
     }
-  }, [tasks, user, activeTab]);
+  }, [tasks, user]);
+
+  const workerStats = useMemo(() => {
+      if (!user || user.role !== UserRole.WORKER) return { active: 0, completed: 0, rating: 5.0 };
+      // Active = Applied, Assigned, or In Progress
+      const active = myJobs.filter(t => 
+          t.status === TaskStatus.APPLIED || 
+          t.status === TaskStatus.ASSIGNED || 
+          t.status === TaskStatus.IN_PROGRESS
+      ).length;
+      const completed = myJobs.filter(t => t.status === TaskStatus.COMPLETED).length;
+      return { active, completed, rating: user.rating || 5.0 };
+  }, [myJobs, user]);
 
   // Effects
   useEffect(() => {
-      if (user) {
+      if (user && !isConfigured) {
+          // Update distance for Mock Data locally if user moves or initializes
           setTasks(prev => prev.map(t => ({
               ...t,
               distanceKm: calculateDistance(user.location_lat, user.location_lng, t.location_lat, t.location_lng)
           })));
+      }
+      if (user) {
           setWorkerLocation({ lat: user.location_lat, lng: user.location_lng });
       }
-  }, [user]);
+  }, [user?.location_lat, user?.location_lng]);
 
   // Tracking Simulation
   useEffect(() => {
       let interval: any;
       if (isTracking && workerLocation && selectedTask) {
           interval = setInterval(() => {
-              // Move worker closer to destination
               setWorkerLocation(prev => {
                   if (!prev) return null;
                   const latDiff = selectedTask.location_lat - prev.lat;
                   const lngDiff = selectedTask.location_lng - prev.lng;
                   return {
-                      lat: prev.lat + latDiff * 0.05, // Move slower for realism
+                      lat: prev.lat + latDiff * 0.05, 
                       lng: prev.lng + lngDiff * 0.05
                   };
               });
-          }, 5000); // Update every 5 seconds as requested
+          }, 5000);
       }
       return () => clearInterval(interval);
   }, [isTracking, selectedTask]);
@@ -480,9 +518,70 @@ const App = () => {
   };
 
   const handleLogout = () => setUser(null);
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+        showToast("Image too large (max 5MB)", "error");
+        return;
+    }
+
+    setIsUploading(true);
+    try {
+        let photoURL = user.photoURL;
+        
+        if (isConfigured && storage) {
+             const storageRef = ref(storage, `profile_photos/${user.id}_${Date.now()}`);
+             const snapshot = await uploadBytes(storageRef, file);
+             photoURL = await getDownloadURL(snapshot.ref);
+             
+             // Save to Firestore
+             await updateDoc(doc(db, 'users', user.id), { photoURL });
+        } else {
+             // Simulate upload delay
+             await new Promise(resolve => setTimeout(resolve, 1500));
+             photoURL = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.readAsDataURL(file);
+             });
+        }
+
+        // Update Local State Immediately
+        setUser(prev => prev ? ({ ...prev, photoURL }) : null);
+        showToast("Profile photo updated!", "success");
+    } catch (error: any) {
+        console.error("Upload error:", error);
+        showToast("Failed to upload image", "error");
+    } finally {
+        setIsUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = ''; 
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+      if (!user) return;
+      setIsUploading(true);
+      try {
+          if (isConfigured && db) {
+               await updateDoc(doc(db, 'users', user.id), { photoURL: '' });
+               // Optionally delete from storage if we tracked the ref, but simpler to just clear URL for now
+          }
+          setUser(prev => prev ? ({ ...prev, photoURL: '' }) : null);
+          showToast("Profile photo removed", "success");
+      } catch (error) {
+          console.error("Remove error:", error);
+          showToast("Failed to remove photo", "error");
+      } finally {
+          setIsUploading(false);
+      }
+  };
   
-  const handlePostTask = () => {
+  const handlePostTask = async () => {
       if (!analyzedTask || !user) return;
+      
       const newTask: Task = {
           id: `t-${Date.now()}`,
           providerId: user.id,
@@ -499,14 +598,29 @@ const App = () => {
           createdAt: Date.now(),
           date: analyzedTask.date || 'Flexible',
           skills: analyzedTask.skills,
-          applicants: []
+          applicants: [],
+          providerPhoto: user.photoURL
       };
-      setTasks([newTask, ...tasks]);
+
+      if (isConfigured && db) {
+          try {
+              await setDoc(doc(db, 'tasks', newTask.id), newTask);
+              showToast("Job Posted Successfully (Synced)", "success");
+          } catch (e) {
+              console.error("Error posting task:", e);
+              showToast("Error saving task to cloud", "error");
+              // Fallback to local add
+              setTasks([newTask, ...tasks]);
+          }
+      } else {
+          setTasks([newTask, ...tasks]);
+          showToast("Job Posted Successfully", "success");
+      }
+      
       setAnalyzedTask(null);
       setTaskPrompt('');
       setIsEditingJob(false);
       setCurrentView('dashboard');
-      showToast("Job Posted Successfully", "success");
   };
 
   const handleAnalyzeTask = async () => {
@@ -515,24 +629,29 @@ const App = () => {
       const result = await analyzeTaskDescription(taskPrompt);
       setAnalyzedTask(result);
       setIsAnalyzing(false);
-      setIsEditingJob(true); // Default to view, but editable via button
+      setIsEditingJob(true); 
   };
 
-  const handleAcceptTask = (task: Task) => {
+  const handleAcceptTask = async (task: Task) => {
       if (!user) return;
+      
+      const newApplicant: AppliedWorker = {
+          workerId: user.id,
+          workerName: user.name,
+          workerRating: user.rating || 5.0,
+          skills: user.skills || [],
+          status: 'pending',
+          distanceKm: task.distanceKm || 0,
+          workerPhoto: user.photoURL
+      };
+
+      // Optimistic UI Update (Instant)
       const updatedTasks = tasks.map(t => {
           if (t.id === task.id) {
               return {
                   ...t,
-                  status: TaskStatus.APPLIED, // 1. Status: Applied
-                  applicants: [...(t.applicants || []), { // 1. Add worker
-                      workerId: user.id,
-                      workerName: user.name,
-                      workerRating: user.rating || 5.0,
-                      status: 'pending',
-                      distanceKm: t.distanceKm,
-                      workerPhoto: user.photoURL
-                  }]
+                  status: TaskStatus.APPLIED, 
+                  applicants: [...(t.applicants || []), newApplicant]
               } as Task;
           }
           return t;
@@ -540,11 +659,30 @@ const App = () => {
       setTasks(updatedTasks);
       const updatedTask = updatedTasks.find(t => t.id === task.id);
       if (updatedTask) setSelectedTask(updatedTask);
-      
-      showToast("Task Applied! Waiting for provider approval.", "success");
+
+      if (isConfigured && db) {
+          try {
+              const taskRef = doc(db, "tasks", task.id);
+              // Update Firestore
+              await updateDoc(taskRef, {
+                  applicants: arrayUnion(newApplicant),
+                  status: task.status === TaskStatus.OPEN ? TaskStatus.APPLIED : task.status
+              });
+              // Increment worker's completed/accepted tasks count stat in Firestore if desired
+              // For now, we rely on the realtime tasks listener to update the stats derived from myJobs
+              showToast("Task Applied! Waiting for provider approval.", "success");
+          } catch (e) {
+              console.error(e);
+              showToast("Failed to apply", "error");
+              // Revert optimistic update if failed (optional, but good practice)
+          }
+      } else {
+          showToast("Task Applied! Waiting for provider approval.", "success");
+      }
   };
 
-  const handleProviderAction = (taskId: string, workerId: string, action: 'accept'|'reject') => {
+  const handleProviderAction = async (taskId: string, workerId: string, action: 'accept'|'reject') => {
+      // Optimistic Update
       const updatedTasks = tasks.map(t => {
           if (t.id === taskId) {
               const newApplicants = t.applicants?.map(a => 
@@ -555,7 +693,7 @@ const App = () => {
 
               return {
                   ...t,
-                  status: action === 'accept' ? TaskStatus.ASSIGNED : t.status, // 2. Status: Assigned
+                  status: action === 'accept' ? TaskStatus.ASSIGNED : t.status,
                   applicants: newApplicants,
                   workerId: action === 'accept' ? workerId : t.workerId,
                   workerName: action === 'accept' ? applicant?.workerName : t.workerName
@@ -566,22 +704,39 @@ const App = () => {
       setTasks(updatedTasks);
       const updatedTask = updatedTasks.find(t => t.id === taskId);
       if (updatedTask) setSelectedTask(updatedTask);
-      
-      if (action === 'accept') {
-          // 3. Push Notification to Worker
-          const newNotification: Notification = {
-              id: `n-${Date.now()}`,
-              title: "Job Assigned!",
-              message: `You have been hired for "${updatedTask?.title}" by ${updatedTask?.providerName}`,
-              time: "Just now",
-              read: false,
-              type: "success"
-          };
-          setNotifications([newNotification, ...notifications]);
+
+      if (isConfigured && db) {
+          const task = tasks.find(t => t.id === taskId);
+          if (!task) return;
+
+          const taskRef = doc(db, "tasks", taskId);
           
-          // Enable tracking for Provider
-          setIsTracking(true); 
-          showToast("Worker Hired. Tracking enabled.", "success");
+          if (action === 'accept') {
+              const applicant = task.applicants?.find(a => a.workerId === workerId);
+              const updatedApplicants = task.applicants?.map(a => 
+                  a.workerId === workerId ? { ...a, status: 'accepted' } : { ...a, status: 'rejected' }
+              );
+
+              await updateDoc(taskRef, {
+                  status: TaskStatus.ASSIGNED,
+                  workerId: workerId,
+                  workerName: applicant?.workerName || 'Worker',
+                  applicants: updatedApplicants
+              });
+              showToast("Worker Hired!", "success");
+              setIsTracking(true);
+          } else {
+              const updatedApplicants = task.applicants?.map(a => 
+                   a.workerId === workerId ? { ...a, status: 'rejected' } : a
+              );
+              await updateDoc(taskRef, { applicants: updatedApplicants });
+              showToast("Applicant Rejected", "success");
+          }
+      } else {
+          if (action === 'accept') {
+              setIsTracking(true); 
+              showToast("Worker Hired. Tracking enabled.", "success");
+          }
       }
   };
 
@@ -616,15 +771,36 @@ const App = () => {
       <div className="h-full bg-[#0B0F19] flex flex-col pb-24 animate-in slide-in-from-right">
           <Header title="Edit Profile" onBack={() => setCurrentView('settings')} />
           <div className="p-4 space-y-4 overflow-y-auto">
-              <div className="flex justify-center mb-6">
-                  <div className="relative">
-                      <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-[#1F2937]">
-                          <img src={user?.photoURL} alt="Profile" className="w-full h-full object-cover" />
+              <div className="flex flex-col items-center mb-6">
+                  <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+                      <div className="w-28 h-28 rounded-full overflow-hidden border-4 border-[#1F2937] relative shadow-2xl">
+                          <img 
+                             src={getAvatarUrl(user)} 
+                             alt="Profile" 
+                             className={`w-full h-full object-cover transition-opacity ${isUploading ? 'opacity-50' : ''}`} 
+                          />
+                          {isUploading && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
+                                <Loader2 className="w-8 h-8 text-white animate-spin" />
+                            </div>
+                          )}
                       </div>
-                      <button className="absolute bottom-0 right-0 bg-blue-600 p-2 rounded-full text-white shadow-lg active:scale-90 transition-transform">
-                          <Edit3 className="w-4 h-4" />
+                      <button className="absolute bottom-0 right-0 bg-blue-600 p-2.5 rounded-full text-white shadow-lg active:scale-90 transition-transform group-hover:bg-blue-500 z-20">
+                          <Camera className="w-5 h-5" />
                       </button>
                   </div>
+                  {user?.photoURL && (
+                      <button onClick={handleRemovePhoto} className="mt-3 text-xs text-red-500 font-bold flex items-center gap-1 hover:text-red-400">
+                          <Trash2 className="w-3 h-3" /> Remove Photo
+                      </button>
+                  )}
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handlePhotoUpload} 
+                    accept="image/*" 
+                    className="hidden" 
+                  />
               </div>
               <InputField label="Full Name" value={user?.name} onChange={(e: any) => setUser({...user!, name: e.target.value})} type="text" />
               <InputField label="Phone" value={user?.phone} onChange={(e: any) => setUser({...user!, phone: e.target.value})} type="tel" />
@@ -797,9 +973,9 @@ const App = () => {
           </div>
 
           <div className="px-4 flex flex-col items-center mb-8">
-              <div className="w-24 h-24 bg-gradient-to-br from-blue-600 to-blue-900 rounded-full p-1 mb-4 shadow-2xl shadow-blue-900/30">
+              <div className="w-28 h-28 bg-gradient-to-br from-blue-600 to-blue-900 rounded-full p-1 mb-4 shadow-2xl shadow-blue-900/30">
                   <div className="w-full h-full rounded-full overflow-hidden border-4 border-[#0B0F19]">
-                      <img src={user?.photoURL} alt="Profile" className="w-full h-full object-cover" />
+                      <img src={getAvatarUrl(user)} alt="Profile" className="w-full h-full object-cover" />
                   </div>
               </div>
               <h2 className="text-2xl font-bold text-white">{user?.name}</h2>
@@ -1005,7 +1181,7 @@ const App = () => {
           <div className="pt-12 px-6 pb-6 flex justify-between items-center bg-[#0B0F19]">
               <div className="flex items-center gap-4">
                   <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-gray-700 shadow-lg">
-                       <img src={user?.photoURL} alt="Profile" className="w-full h-full object-cover" />
+                       <img src={getAvatarUrl(user)} alt="Profile" className="w-full h-full object-cover" />
                   </div>
                   <div>
                       <p className="text-gray-400 text-xs uppercase font-bold tracking-wider mb-1">{getGreeting()}</p>
@@ -1026,9 +1202,9 @@ const App = () => {
           {/* Worker Stats */}
           <div className="px-4 mb-6">
               <div className="grid grid-cols-3 gap-3">
-                  <button onClick={() => { setActiveTab('ONGOING'); setCurrentView('my-tasks'); }} className="bg-[#1F2937] p-3 rounded-xl border border-gray-800 flex flex-col items-center shadow-sm active:scale-95 transition-transform">
+                  <button onClick={() => { setActiveTab('ASSIGNED'); setCurrentView('my-tasks'); }} className="bg-[#1F2937] p-3 rounded-xl border border-gray-800 flex flex-col items-center shadow-sm active:scale-95 transition-transform">
                       <Briefcase className="w-5 h-5 text-blue-400 mb-1" />
-                      <span className="text-lg font-bold text-white">{myJobs.filter(t => t.status === TaskStatus.IN_PROGRESS).length}</span>
+                      <span className="text-lg font-bold text-white">{workerStats.active}</span>
                       <span className="text-[10px] text-gray-400 uppercase">Active</span>
                   </button>
                   <button onClick={() => { setActiveTab('COMPLETED'); setCurrentView('my-tasks'); }} className="bg-[#1F2937] p-3 rounded-xl border border-gray-800 flex flex-col items-center shadow-sm active:scale-95 transition-transform">
@@ -1111,7 +1287,7 @@ const App = () => {
           <div className="pt-14 px-6 pb-6 bg-gradient-to-b from-slate-900 to-[#0B0F19] flex justify-between items-start">
               <div className="flex items-center gap-4">
                   <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-gray-600">
-                      <img src={user?.photoURL || `https://ui-avatars.com/api/?name=${user?.name}`} alt="Profile" className="w-full h-full object-cover" />
+                      <img src={getAvatarUrl(user)} alt="Profile" className="w-full h-full object-cover" />
                   </div>
                   <div>
                       <p className="text-blue-400 text-xs font-bold uppercase tracking-wider mb-1">{getGreeting()}</p>
@@ -1208,7 +1384,6 @@ const App = () => {
       if (!selectedTask) return null;
       const isOwner = user?.role === UserRole.PROVIDER && selectedTask.providerId === user.id;
       const isApplied = selectedTask.applicants?.some(a => a.workerId === user?.id);
-      // 4. Worker View Logic
       const isAssignedToMe = selectedTask.workerId === user?.id;
 
       return (
@@ -1335,6 +1510,7 @@ const App = () => {
                                         </div>
                                      )}
                                      {app.status === 'accepted' && <div className="text-green-400 text-xs font-bold bg-green-500/10 py-2 rounded text-center">Hired</div>}
+                                     {app.status === 'rejected' && <div className="text-red-400 text-xs font-bold bg-red-500/10 py-2 rounded text-center">Rejected</div>}
                                  </div>
                              ))
                            }
@@ -1465,7 +1641,20 @@ const App = () => {
     </div>
   );
 
-  const renderMyTasks = () => (
+  const renderMyTasks = () => {
+      let displayedTasks = [];
+      if (activeTab === 'ASSIGNED') {
+          displayedTasks = myJobs.filter(t => 
+             t.status === TaskStatus.APPLIED || 
+             t.status === TaskStatus.ASSIGNED
+          );
+      } else if (activeTab === 'ONGOING') {
+          displayedTasks = myJobs.filter(t => t.status === TaskStatus.IN_PROGRESS);
+      } else {
+          displayedTasks = myJobs.filter(t => t.status === TaskStatus.COMPLETED);
+      }
+
+    return (
     <div className="h-full bg-[#0B0F19] flex flex-col pb-24">
         <Header title="My Jobs" onBack={() => setCurrentView('dashboard')} />
         
@@ -1484,7 +1673,7 @@ const App = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 pb-4">
-            {myJobs.length === 0 ? (
+            {displayedTasks.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-64 text-gray-500">
                     <div className="w-16 h-16 bg-[#1F2937] rounded-full flex items-center justify-center mb-4">
                         <Briefcase className="w-8 h-8 opacity-50" />
@@ -1493,13 +1682,13 @@ const App = () => {
                     <p className="text-xs mt-1">Check back later for new opportunities.</p>
                 </div>
             ) : (
-                myJobs.map(task => (
+                displayedTasks.map(task => (
                     <TaskCard key={task.id} task={task} userRole={user?.role || UserRole.WORKER} onClick={(t) => { setSelectedTask(t); setCurrentView('job-details'); }} />
                 ))
             )}
         </div>
     </div>
-  );
+  )};
 
   if (!user) return <AuthFlow onComplete={setUser} />;
 
