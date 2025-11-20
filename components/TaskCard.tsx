@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { MapPin, ArrowRight, Clock, DollarSign, Users } from 'lucide-react';
+import { MapPin, ArrowRight, Clock, DollarSign, Users, CheckCircle } from 'lucide-react';
 import { Task, TaskCategory, UserRole, TaskStatus } from '../types';
 
 interface TaskCardProps {
@@ -34,6 +34,13 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, userRole, onClick }) => {
       onClick={() => onClick(task)}
       className="bg-[#1F2937] p-4 rounded-xl border border-gray-800 mb-3 relative overflow-hidden active:scale-[0.99] transition-all shadow-sm hover:border-gray-700 group"
     >
+      {/* Hired Badge for Worker */}
+      {userRole === UserRole.WORKER && (task.status === TaskStatus.ASSIGNED || task.status === TaskStatus.IN_PROGRESS) && (
+          <div className="absolute top-0 right-0 bg-green-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-bl-lg shadow-lg flex items-center">
+              <CheckCircle className="w-2.5 h-2.5 mr-1" /> HIRED
+          </div>
+      )}
+
       {/* Header Row */}
       <div className="flex justify-between items-start mb-2">
          <div className="flex items-center gap-2">

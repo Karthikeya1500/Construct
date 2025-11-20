@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { User, UserRole, Task, TaskStatus, TaskCategory, AIAnalysisResult, Notification, AppliedWorker } from './types';
 import { INITIAL_TASKS, MOCK_NOTIFICATIONS, MOCK_USER, MOCK_PROVIDER } from './services/mockData';
 import { analyzeTaskDescription } from './services/geminiService';
-import { signInWithGoogle, isConfigured } from './services/authService';
+import { isConfigured } from './services/authService';
 import Navigation from './components/Navigation';
 import TaskCard from './components/TaskCard';
 import MapVisualizer from './components/MapVisualizer';
@@ -12,7 +12,7 @@ import {
   ChevronLeft, Briefcase, Lock, Mail, User as UserIcon, 
   Bell, LogOut, Edit3, ChevronRight, Settings, Shield, Clock, DollarSign,
   Hammer, Truck, Package, Smartphone, Moon, LogIn, Search, Navigation as NavIcon, HelpCircle, FileText,
-  Users, PlayCircle, Phone
+  Users, PlayCircle, Phone, UserPlus, PlusCircle, PhoneCall
 } from 'lucide-react';
 
 // --- Utilities ---
@@ -92,98 +92,113 @@ const CategoryPill = ({ label, icon: Icon, active, onClick }: any) => (
 
 // --- Auth Flow ---
 const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }) => {
-  const [step, setStep] = useState<'login' | 'signup' | 'role'>('login');
+  // Steps: login -> signup (form) -> role_selection (cards)
+  const [step, setStep] = useState<'login' | 'signup' | 'role_selection'>('login');
   const [formData, setFormData] = useState({ email: '', password: '', name: '', role: UserRole.WORKER });
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleGoogleLogin = async () => {
-    if (!isConfigured) { 
-        // Mock login for demo if config missing
-        onComplete(MOCK_USER);
-        return; 
-    }
-    setIsLoading(true);
-    try {
-      const result = await signInWithGoogle();
-      if (result.isNewUser) {
-        setFormData(prev => ({ ...prev, name: result.user.name || '', email: result.user.email || '' }));
-        setStep('role');
-      } else {
-        onComplete(result.user as User);
-      }
-    } catch (error) {
-      console.error("Login failed", error);
-      alert("Login failed. Check console.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleSignupComplete = () => {
+  const finalizeSignup = (selectedRole: UserRole) => {
     setIsLoading(true);
     // Simulate API call
     setTimeout(() => {
-        onComplete({
+        const newUser: User = {
             id: 'new-' + Date.now(),
-            name: formData.name,
-            email: formData.email,
-            role: formData.role,
+            name: formData.name || 'New User',
+            email: formData.email || 'user@example.com',
+            role: selectedRole,
             phone: '',
             location_lat: 40.7128,
             location_lng: -74.0060,
             address: 'New User Address',
-            rating: 5.0, // Default rating
+            rating: 5.0,
             completedTasks: 0,
             skills: [],
-            photoURL: `https://ui-avatars.com/api/?name=${formData.name}&background=random`
-        });
+            photoURL: `https://ui-avatars.com/api/?name=${formData.name || 'New User'}&background=random`
+        };
+        onComplete(newUser);
         setIsLoading(false);
-    }, 1000);
+    }, 800);
   };
 
-  if (step === 'role') {
+  // 🧑‍💼 Step 3: Role Selection Screen
+  if (step === 'role_selection') {
      return (
-        <div className="flex flex-col h-full p-6 pt-20 bg-[#0B0F19] animate-in fade-in">
-            <h2 className="text-3xl font-bold text-white mb-2">Choose Role</h2>
-            <p className="text-gray-400 mb-8">How do you want to use WorkLink?</p>
-            <div className="grid gap-4">
-                <button onClick={() => { setFormData({...formData, role: UserRole.WORKER}); handleSignupComplete(); }} className="p-6 bg-[#1F2937] rounded-2xl border border-gray-700 text-left hover:border-blue-500 transition-all group">
-                    <Hammer className="w-8 h-8 text-blue-400 mb-3 group-hover:scale-110 transition-transform" />
-                    <h3 className="text-xl font-bold text-white">I want to Work</h3>
-                    <p className="text-sm text-gray-400">Find jobs nearby and earn.</p>
+        <div className="flex flex-col h-full p-6 pt-20 bg-[#0B0F19] animate-in fade-in items-center justify-center">
+            <div className="text-center mb-10">
+                <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-900/50">
+                    <UserPlus className="w-8 h-8 text-white" />
+                </div>
+                <h2 className="text-3xl font-bold text-white mb-2">Select Your Role</h2>
+                <p className="text-gray-400">How would you like to use WorkLink?</p>
+            </div>
+
+            <div className="grid gap-6 w-full max-w-sm">
+                <button 
+                    onClick={() => finalizeSignup(UserRole.WORKER)} 
+                    className="group relative p-6 bg-[#1F2937] rounded-2xl border border-gray-700 hover:border-blue-500 transition-all shadow-lg active:scale-95 flex items-center text-left"
+                >
+                    <div className="w-14 h-14 bg-blue-500/10 rounded-full flex items-center justify-center mr-4 group-hover:bg-blue-500/20 transition-colors">
+                        <span className="text-2xl">👷</span>
+                    </div>
+                    <div>
+                        <h3 className="text-xl font-bold text-white mb-1 group-hover:text-blue-400 transition-colors">Worker</h3>
+                        <p className="text-sm text-gray-400">Find nearby jobs & earn</p>
+                    </div>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <ChevronRight className="text-blue-400" />
+                    </div>
                 </button>
-                <button onClick={() => { setFormData({...formData, role: UserRole.PROVIDER}); handleSignupComplete(); }} className="p-6 bg-[#1F2937] rounded-2xl border border-gray-700 text-left hover:border-green-500 transition-all group">
-                    <Briefcase className="w-8 h-8 text-green-400 mb-3 group-hover:scale-110 transition-transform" />
-                    <h3 className="text-xl font-bold text-white">I want to Hire</h3>
-                    <p className="text-sm text-gray-400">Post jobs and find help.</p>
+
+                <button 
+                    onClick={() => finalizeSignup(UserRole.PROVIDER)} 
+                    className="group relative p-6 bg-[#1F2937] rounded-2xl border border-gray-700 hover:border-green-500 transition-all shadow-lg active:scale-95 flex items-center text-left"
+                >
+                    <div className="w-14 h-14 bg-green-500/10 rounded-full flex items-center justify-center mr-4 group-hover:bg-green-500/20 transition-colors">
+                        <span className="text-2xl">🧑‍🔧</span>
+                    </div>
+                    <div>
+                        <h3 className="text-xl font-bold text-white mb-1 group-hover:text-green-400 transition-colors">Provider</h3>
+                        <p className="text-sm text-gray-400">Post jobs & hire workers</p>
+                    </div>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <ChevronRight className="text-green-400" />
+                    </div>
                 </button>
             </div>
         </div>
      );
   }
 
+  // 📝 Step 2: Clean Normal Sign-Up Form
   if (step === 'signup') {
       return (
         <div className="flex flex-col h-full p-6 pt-20 bg-[#0B0F19] overflow-y-auto animate-in slide-in-from-right">
+            <button onClick={() => setStep('login')} className="mb-6 flex items-center text-gray-400 hover:text-white">
+                <ChevronLeft className="w-5 h-5 mr-1" /> Back
+            </button>
             <div className="mb-8">
                 <h1 className="text-3xl font-bold text-white">Create Account</h1>
-                <p className="text-gray-400">Join WorkLink today</p>
+                <p className="text-gray-400 mt-2">Enter your details to get started.</p>
             </div>
-            <InputField icon={UserIcon} type="text" placeholder="Full Name" value={formData.name} onChange={(e:any) => setFormData({...formData, name: e.target.value})} />
-            <InputField icon={Mail} type="email" placeholder="Email" value={formData.email} onChange={(e:any) => setFormData({...formData, email: e.target.value})} />
-            <InputField icon={Lock} type="password" placeholder="Password" value={formData.password} onChange={(e:any) => setFormData({...formData, password: e.target.value})} />
             
-            <button onClick={() => setStep('role')} className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl mt-4 hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/30">
-                Sign Up
-            </button>
-
-            <div className="mt-8 text-center pb-8">
-                <p className="text-gray-500">Already have an account? <button onClick={() => setStep('login')} className="text-blue-400 font-bold hover:underline">Sign In</button></p>
+            <div className="space-y-4">
+                <InputField icon={UserIcon} type="text" placeholder="Full Name" value={formData.name} onChange={(e:any) => setFormData({...formData, name: e.target.value})} />
+                <InputField icon={Mail} type="email" placeholder="Email Address" value={formData.email} onChange={(e:any) => setFormData({...formData, email: e.target.value})} />
+                <InputField icon={Lock} type="password" placeholder="Password" value={formData.password} onChange={(e:any) => setFormData({...formData, password: e.target.value})} />
             </div>
+            
+            <button 
+                onClick={() => setStep('role_selection')} 
+                disabled={!formData.email || !formData.password || !formData.name}
+                className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl mt-8 hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                Create Account
+            </button>
         </div>
       );
   }
 
+  // 🔑 Step 1: Login Screen
   return (
       <div className="flex flex-col h-full p-6 justify-center bg-[#0B0F19] animate-in fade-in">
           <div className="mb-10 text-center">
@@ -201,20 +216,8 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
               <button onClick={() => onComplete(MOCK_USER)} className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/30">
                   Log In
               </button>
-          </div>
-
-          <div className="relative py-8 w-full max-w-sm mx-auto">
-              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-800"></div></div>
-              <div className="relative flex justify-center"><span className="bg-[#0B0F19] px-4 text-sm text-gray-500">Or continue with</span></div>
-          </div>
-
-          <div className="w-full max-w-sm mx-auto">
-            <button onClick={handleGoogleLogin} disabled={isLoading} className="w-full bg-white text-black font-bold py-4 rounded-xl flex items-center justify-center gap-3 hover:bg-gray-100 transition-colors shadow-lg">
-               {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="G" />}
-               Continue with Google
-            </button>
-            
-            <p className="mt-8 text-center text-gray-500 text-sm">Don't have an account? <button onClick={() => setStep('signup')} className="text-blue-400 font-bold hover:underline">Sign Up</button></p>
+              
+              <p className="mt-8 text-center text-gray-500 text-sm">Don't have an account? <button onClick={() => setStep('signup')} className="text-blue-400 font-bold hover:underline">Sign Up</button></p>
           </div>
       </div>
   );
@@ -253,9 +256,18 @@ const App = () => {
   const myJobs = useMemo(() => {
     if (!user) return [];
     if (user.role === UserRole.WORKER) {
-        if (activeTab === 'ASSIGNED') return tasks.filter(t => t.status === TaskStatus.APPLIED || t.status === TaskStatus.ASSIGNED).filter(t => t.applicants?.some(a => a.workerId === user.id));
-        if (activeTab === 'ONGOING') return tasks.filter(t => t.status === TaskStatus.IN_PROGRESS && t.applicants?.some(a => a.workerId === user.id));
-        if (activeTab === 'COMPLETED') return tasks.filter(t => t.status === TaskStatus.COMPLETED && t.applicants?.some(a => a.workerId === user.id));
+        // For workers: 
+        // ASSIGNED = jobs where they are APPLIED or ASSIGNED/IN_PROGRESS
+        // ONGOING = job status IN_PROGRESS and they are the worker
+        // COMPLETED = job status COMPLETED and they are the worker
+        if (activeTab === 'ASSIGNED') {
+            return tasks.filter(t => 
+                (t.status === TaskStatus.APPLIED || t.status === TaskStatus.ASSIGNED || t.status === TaskStatus.IN_PROGRESS) && 
+                t.applicants?.some(a => a.workerId === user.id)
+            );
+        }
+        if (activeTab === 'ONGOING') return tasks.filter(t => t.status === TaskStatus.IN_PROGRESS && t.workerId === user.id);
+        if (activeTab === 'COMPLETED') return tasks.filter(t => t.status === TaskStatus.COMPLETED && t.workerId === user.id);
         return [];
     } else {
         // Provider Logic
@@ -311,6 +323,7 @@ const App = () => {
           id: `t-${Date.now()}`,
           providerId: user.id,
           providerName: user.name,
+          providerPhone: user.phone || '123-456-7890',
           title: analyzedTask.title,
           description: analyzedTask.description,
           budget: analyzedTask.budget || 0,
@@ -347,8 +360,8 @@ const App = () => {
           if (t.id === task.id) {
               return {
                   ...t,
-                  status: TaskStatus.APPLIED,
-                  applicants: [...(t.applicants || []), {
+                  status: TaskStatus.APPLIED, // 1. Status: Applied
+                  applicants: [...(t.applicants || []), { // 1. Add worker
                       workerId: user.id,
                       workerName: user.name,
                       workerRating: user.rating || 5.0,
@@ -364,7 +377,7 @@ const App = () => {
       const updatedTask = updatedTasks.find(t => t.id === task.id);
       if (updatedTask) setSelectedTask(updatedTask);
       
-      showToast("Task Accepted! Waiting for provider approval.", "success");
+      showToast("Task Applied! Waiting for provider approval.", "success");
   };
 
   const handleProviderAction = (taskId: string, workerId: string, action: 'accept'|'reject') => {
@@ -374,11 +387,14 @@ const App = () => {
                   a.workerId === workerId ? { ...a, status: action === 'accept' ? 'accepted' : 'rejected' } : a
               ) as AppliedWorker[];
               
+              const applicant = t.applicants?.find(a => a.workerId === workerId);
+
               return {
                   ...t,
-                  status: action === 'accept' ? TaskStatus.IN_PROGRESS : t.status,
+                  status: action === 'accept' ? TaskStatus.ASSIGNED : t.status, // 2. Status: Assigned
                   applicants: newApplicants,
-                  workerId: action === 'accept' ? workerId : t.workerId
+                  workerId: action === 'accept' ? workerId : t.workerId,
+                  workerName: action === 'accept' ? applicant?.workerName : t.workerName
               };
           }
           return t;
@@ -388,7 +404,19 @@ const App = () => {
       if (updatedTask) setSelectedTask(updatedTask);
       
       if (action === 'accept') {
-          setIsTracking(true); // Enable tracking simulation
+          // 3. Push Notification to Worker
+          const newNotification: Notification = {
+              id: `n-${Date.now()}`,
+              title: "Job Assigned!",
+              message: `You have been hired for "${updatedTask?.title}" by ${updatedTask?.providerName}`,
+              time: "Just now",
+              read: false,
+              type: "success"
+          };
+          setNotifications([newNotification, ...notifications]);
+          
+          // Enable tracking for Provider
+          setIsTracking(true); 
           showToast("Worker Hired. Tracking enabled.", "success");
       }
   };
@@ -396,7 +424,7 @@ const App = () => {
   // --- Render Views ---
 
   const renderNotifications = () => (
-      <div className="h-full bg-[#0B0F19] flex flex-col">
+      <div className="h-full bg-[#0B0F19] flex flex-col pb-24">
           <Header title="Notifications" onBack={() => setCurrentView('dashboard')} />
           <div className="p-4 space-y-3 overflow-y-auto">
               {notifications.length === 0 ? (
@@ -407,7 +435,7 @@ const App = () => {
               ) : (
                   notifications.map(n => (
                       <div key={n.id} className={`p-4 rounded-xl border border-gray-800 flex gap-3 ${n.read ? 'bg-[#0B0F19]' : 'bg-[#1F2937]'}`}>
-                          <div className={`w-2 h-2 mt-2 rounded-full ${n.type === 'success' ? 'bg-green-500' : n.type === 'warning' ? 'bg-orange-500' : 'bg-blue-500'}`}></div>
+                          <div className={`w-2 h-2 mt-2 rounded-full shrink-0 ${n.type === 'success' ? 'bg-green-500' : n.type === 'warning' ? 'bg-orange-500' : 'bg-blue-500'}`}></div>
                           <div>
                               <h4 className="text-white font-bold text-sm">{n.title}</h4>
                               <p className="text-gray-400 text-xs mt-1">{n.message}</p>
@@ -564,7 +592,7 @@ const App = () => {
                   </div>
               </section>
 
-              {/* Preferences - Removed Dark Mode, Fixed Notifications */}
+              {/* Preferences */}
               <section>
                   <h3 className="text-gray-500 text-xs font-bold uppercase mb-3 px-2">Preferences</h3>
                   <div className="space-y-2">
@@ -691,6 +719,55 @@ const App = () => {
       </div>
   );
 
+  const renderWorkerRoute = () => (
+    <div className="h-full w-full relative bg-[#0f172a] flex flex-col">
+        {/* Map Route */}
+        <div className="flex-1 relative">
+             <MapVisualizer 
+                tasks={[]}
+                userLat={workerLocation?.lat || user!.location_lat} 
+                userLng={workerLocation?.lng || user!.location_lng}
+                destinationLat={selectedTask?.location_lat}
+                destinationLng={selectedTask?.location_lng}
+                activeTask={selectedTask}
+                showRoute={true}
+                showUserLocation={true}
+                isTrackingMode={true}
+             />
+             <div className="absolute top-4 left-4 z-50">
+                <button onClick={() => setCurrentView('job-details')} className="bg-black/60 p-2 rounded-full text-white backdrop-blur-md active:scale-90 border border-white/10">
+                    <ChevronLeft />
+                </button>
+             </div>
+        </div>
+        
+        {/* Navigation Sheet */}
+        <div className="bg-[#0B0F19] border-t border-gray-800 p-5 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-50">
+             <div className="w-12 h-1 bg-gray-700 rounded-full mx-auto mb-4"></div>
+             
+             <div className="flex items-center justify-between mb-6">
+                <div>
+                    <h3 className="text-xl font-bold text-white">{selectedTask?.title}</h3>
+                    <p className="text-gray-400 text-sm">{selectedTask?.address}</p>
+                </div>
+                <div className="text-right">
+                    <div className="text-2xl font-bold text-green-400">{selectedTask?.distanceKm?.toFixed(1)} km</div>
+                    <div className="text-xs text-gray-500">Distance</div>
+                </div>
+             </div>
+
+             <a 
+                href={`https://www.google.com/maps/dir/?api=1&destination=${selectedTask?.location_lat},${selectedTask?.location_lng}`}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/30 flex items-center justify-center gap-2"
+             >
+                 <NavIcon className="w-5 h-5" /> Start Navigation in Google Maps
+             </a>
+        </div>
+    </div>
+  );
+
   const renderProviderTracking = () => (
       <div className="h-full w-full relative bg-[#0f172a] flex flex-col">
           {/* Map Area */}
@@ -712,7 +789,7 @@ const App = () => {
                        <ChevronLeft />
                   </button>
                   <div className="bg-green-600 px-4 py-1.5 rounded-full text-white text-xs font-bold shadow-lg animate-pulse">
-                       Live Tracking
+                       Worker Live
                   </div>
               </div>
           </div>
@@ -736,7 +813,7 @@ const App = () => {
                        <p className="text-gray-400 text-sm">Arriving in <span className="text-green-400 font-bold">12 mins</span></p>
                    </div>
                    <div className="ml-auto flex gap-3">
-                       <button className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-green-400 hover:bg-gray-700"><Phone className="w-5 h-5" /></button>
+                       <a href={`tel:${'123-456-7890'}`} className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-green-400 hover:bg-gray-700"><Phone className="w-5 h-5" /></a>
                        <button className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-blue-400 hover:bg-gray-700"><Mail className="w-5 h-5" /></button>
                    </div>
                </div>
@@ -858,108 +935,116 @@ const App = () => {
       </div>
   );
 
-  const renderProviderDashboard = () => (
+  const renderProviderDashboard = () => {
+      const myPostedTasks = tasks.filter(t => t.providerId === user?.id);
+      const recentApplications = myPostedTasks.flatMap(t => 
+          (t.applicants || []).filter(a => a.status === 'pending').map(a => ({...a, taskTitle: t.title, taskId: t.id}))
+      );
+
+      return (
       <div className="h-full bg-[#0B0F19] overflow-y-auto pb-24 no-scrollbar">
-          {/* Gradient Header */}
-          <div className="pt-14 px-6 pb-12 bg-gradient-to-br from-blue-900 via-[#0B0F19] to-[#0B0F19] relative overflow-hidden">
-               <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl -mr-10 -mt-10"></div>
-               <div className="flex justify-between items-start relative z-10">
-                  <div className="flex items-center gap-4">
-                      <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-blue-400/50 shadow-2xl shadow-blue-900/50">
-                           {/* Use UI Avatars for guaranteed image */}
-                           <img src={user?.photoURL || `https://ui-avatars.com/api/?name=${user?.name}&background=0D8ABC&color=fff`} alt="Profile" className="w-full h-full object-cover" />
-                      </div>
-                      <div>
-                          <p className="text-blue-200 text-xs uppercase font-bold tracking-widest mb-1">{getGreeting()}</p>
-                          <h1 className="text-2xl font-bold text-white leading-tight">{user?.name}</h1>
-                      </div>
+          {/* Provider Header */}
+          <div className="pt-14 px-6 pb-6 bg-gradient-to-b from-slate-900 to-[#0B0F19] flex justify-between items-start">
+              <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-gray-600">
+                      <img src={user?.photoURL || `https://ui-avatars.com/api/?name=${user?.name}`} alt="Profile" className="w-full h-full object-cover" />
                   </div>
-                  <button onClick={() => setCurrentView('settings')} className="p-2 bg-white/10 rounded-full text-white hover:bg-white/20 transition-colors backdrop-blur-sm border border-white/5">
-                      <Settings className="w-6 h-6" />
-                  </button>
-               </div>
-          </div>
-
-          {/* Stats - Clean Premium Look */}
-          <div className="px-4 -mt-8 relative z-20 mb-8">
-              <div className="bg-[#1F2937]/80 backdrop-blur-md p-4 rounded-2xl border border-gray-700 shadow-xl grid grid-cols-3 gap-4">
-                  <button onClick={() => { setActiveTab('ASSIGNED'); setCurrentView('provider-active'); }} className="flex flex-col items-center gap-2 group">
-                      <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-colors">
-                          <Briefcase className="w-5 h-5" />
-                      </div>
-                      <div className="text-center">
-                          <div className="text-lg font-bold text-white">{tasks.filter(t => t.providerId === user?.id && t.status === TaskStatus.OPEN).length}</div>
-                          <div className="text-[10px] text-gray-400 uppercase font-bold tracking-wide">Active</div>
-                      </div>
-                  </button>
-                  
-                  <button onClick={() => { setActiveTab('ONGOING'); setCurrentView('provider-active'); }} className="flex flex-col items-center gap-2 group">
-                       <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center text-green-400 group-hover:bg-green-500 group-hover:text-white transition-colors">
-                          <CheckCircle className="w-5 h-5" />
-                      </div>
-                      <div className="text-center">
-                          <div className="text-lg font-bold text-white">{tasks.filter(t => t.providerId === user?.id && t.status === TaskStatus.COMPLETED).length}</div>
-                          <div className="text-[10px] text-gray-400 uppercase font-bold tracking-wide">Done</div>
-                      </div>
-                  </button>
-
-                  <button onClick={() => { setActiveTab('ASSIGNED'); setCurrentView('provider-active'); }} className="flex flex-col items-center gap-2 group">
-                       <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-400 group-hover:bg-purple-500 group-hover:text-white transition-colors">
-                          <Users className="w-5 h-5" />
-                      </div>
-                      <div className="text-center">
-                          <div className="text-lg font-bold text-white">{tasks.filter(t => t.providerId === user?.id && t.status === TaskStatus.IN_PROGRESS).length}</div>
-                          <div className="text-[10px] text-gray-400 uppercase font-bold tracking-wide">Hired</div>
-                      </div>
-                  </button>
+                  <div>
+                      <p className="text-blue-400 text-xs font-bold uppercase tracking-wider mb-1">{getGreeting()}</p>
+                      <h1 className="text-2xl font-bold text-white">{user?.name}</h1>
+                  </div>
               </div>
-          </div>
-
-          {/* Post Job CTA */}
-          <div className="px-4 mb-8">
-              <button onClick={() => setCurrentView('post-task')} className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 p-6 rounded-2xl shadow-lg shadow-blue-900/30 flex items-center justify-between group transition-all hover:scale-[1.02] border border-white/10">
-                  <div className="text-left">
-                      <div className="flex items-center gap-2 mb-1">
-                          <Sparkles className="w-4 h-4 text-blue-200 animate-pulse" />
-                          <span className="text-blue-200 text-xs font-bold uppercase tracking-wider">AI Assisted</span>
-                      </div>
-                      <h3 className="text-xl font-bold text-white">Post a New Job</h3>
-                      <p className="text-blue-100 text-sm mt-1 opacity-80">Hire workers instantly.</p>
-                  </div>
-                  <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center group-hover:rotate-90 transition-transform backdrop-blur-md border border-white/20">
-                      <Edit3 className="w-6 h-6 text-white" />
-                  </div>
+              <button onClick={() => setCurrentView('settings')} className="p-2.5 bg-[#1F2937] rounded-full text-gray-300 hover:bg-gray-700 transition-colors">
+                  <Settings className="w-5 h-5" />
               </button>
           </div>
 
-          {/* Job Listings */}
-          <div className="px-4">
-              <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-white font-bold text-lg">Your Job Posts</h3>
-                  <span className="bg-[#1F2937] px-2 py-1 rounded-md text-xs text-gray-400 border border-gray-700">{tasks.filter(t => t.providerId === user?.id).length} Total</span>
+          {/* Provider Stats */}
+          <div className="px-4 mb-6">
+              <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-[#1F2937] p-4 rounded-2xl border border-gray-800 shadow-sm">
+                      <div className="text-3xl font-bold text-white mb-1">{myPostedTasks.filter(t => t.status === TaskStatus.OPEN).length}</div>
+                      <p className="text-xs text-gray-400 uppercase font-bold">Active Listings</p>
+                  </div>
+                  <div className="bg-[#1F2937] p-4 rounded-2xl border border-gray-800 shadow-sm">
+                      <div className="text-3xl font-bold text-white mb-1">{myPostedTasks.filter(t => t.status === TaskStatus.IN_PROGRESS || t.status === TaskStatus.ASSIGNED).length}</div>
+                      <p className="text-xs text-gray-400 uppercase font-bold">Jobs In Progress</p>
+                  </div>
+              </div>
+          </div>
+
+          {/* Post Job Button */}
+          <div className="px-4 mb-8">
+              <button onClick={() => setCurrentView('post-task')} className="w-full bg-blue-600 hover:bg-blue-500 p-5 rounded-2xl flex items-center justify-between shadow-lg shadow-blue-900/20 group transition-all">
+                  <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
+                          <Sparkles className="w-5 h-5 text-white" />
+                      </div>
+                      <div className="text-left">
+                          <h3 className="text-lg font-bold text-white">Post a New Job</h3>
+                          <p className="text-blue-100 text-sm">Find help in minutes</p>
+                      </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-white group-hover:translate-x-1 transition-transform" />
+              </button>
+          </div>
+
+          {/* Recent Applications Section */}
+          <div className="px-4 mb-6">
+              <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-white font-bold text-sm uppercase tracking-wide">Recent Applications</h3>
+                  <span className="bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{recentApplications.length} New</span>
               </div>
               
-              <div className="space-y-4 pb-8">
-                  {tasks.filter(t => t.providerId === user?.id).length === 0 ? (
-                       <div className="py-12 text-center bg-[#1F2937]/50 rounded-2xl border border-dashed border-gray-700">
-                           <Briefcase className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                           <p className="text-gray-400 font-medium">No active jobs yet</p>
-                           <button onClick={() => setCurrentView('post-task')} className="mt-2 text-blue-400 text-sm font-bold hover:underline">Create your first job</button>
+              {recentApplications.length === 0 ? (
+                  <div className="bg-[#1F2937]/50 border border-dashed border-gray-700 rounded-xl p-6 text-center">
+                      <p className="text-gray-500 text-sm">No pending applications.</p>
+                  </div>
+              ) : (
+                  <div className="space-y-3">
+                      {recentApplications.slice(0, 3).map((app, idx) => (
+                          <div key={idx} className="bg-[#1F2937] p-4 rounded-xl border border-gray-800 flex items-center gap-3" onClick={() => { 
+                              const t = tasks.find(task => task.id === app.taskId);
+                              if (t) { setSelectedTask(t); setCurrentView('job-details'); }
+                          }}>
+                               <div className="w-10 h-10 rounded-full bg-gray-700 overflow-hidden">
+                                   <img src={app.workerPhoto} alt="" className="w-full h-full object-cover" />
+                               </div>
+                               <div className="flex-1 min-w-0">
+                                   <h4 className="text-white font-bold text-sm truncate">{app.workerName}</h4>
+                                   <p className="text-gray-400 text-xs truncate">Applied for: <span className="text-blue-400">{app.taskTitle}</span></p>
+                               </div>
+                               <button className="px-3 py-1.5 bg-blue-600/20 text-blue-400 text-xs font-bold rounded-lg">Review</button>
+                          </div>
+                      ))}
+                  </div>
+              )}
+          </div>
+
+          {/* Active Jobs List */}
+          <div className="px-4">
+              <h3 className="text-white font-bold text-sm uppercase tracking-wide mb-3">Your Active Jobs</h3>
+              <div className="space-y-3">
+                  {myPostedTasks.length === 0 ? (
+                       <div className="py-8 text-center bg-[#1F2937]/30 rounded-xl border border-gray-800">
+                           <p className="text-gray-500 text-sm">You haven't posted any jobs yet.</p>
                        </div>
                   ) : (
-                      tasks.filter(t => t.providerId === user?.id).map(t => (
+                      myPostedTasks.map(t => (
                           <TaskCard key={t.id} task={t} userRole={UserRole.PROVIDER} onClick={(t) => { setSelectedTask(t); setCurrentView('job-details'); }} />
                       ))
                   )}
               </div>
           </div>
       </div>
-  );
+      );
+  };
 
   const renderJobDetails = () => {
       if (!selectedTask) return null;
       const isOwner = user?.role === UserRole.PROVIDER && selectedTask.providerId === user.id;
       const isApplied = selectedTask.applicants?.some(a => a.workerId === user?.id);
+      // 4. Worker View Logic
       const isAssignedToMe = selectedTask.workerId === user?.id;
 
       return (
@@ -996,9 +1081,14 @@ const App = () => {
                        </div>
                    </div>
 
-                   {/* Provider Info (Worker View) - NO RATING */}
+                   {/* 5. Hired State: Show Provider Info */}
                    {!isOwner && (
-                       <div className="mb-6 p-4 bg-[#1F2937] rounded-xl border border-gray-800 flex items-center justify-between shadow-sm">
+                       <div className={`mb-6 p-4 rounded-xl border flex items-center justify-between shadow-sm ${isAssignedToMe ? 'bg-green-500/10 border-green-500/30' : 'bg-[#1F2937] border-gray-800'}`}>
+                           {isAssignedToMe && (
+                               <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-lg">
+                                   YOU ARE HIRED
+                               </div>
+                           )}
                            <div className="flex items-center gap-3">
                                <div className="w-10 h-10 bg-gradient-to-br from-gray-700 to-gray-600 rounded-full flex items-center justify-center font-bold text-white overflow-hidden">
                                    {selectedTask.providerPhoto ? <img src={selectedTask.providerPhoto} className="w-full h-full object-cover" /> : selectedTask.providerName.charAt(0)}
@@ -1008,7 +1098,14 @@ const App = () => {
                                    <p className="text-gray-500 text-[10px] uppercase tracking-wide">Job Poster</p>
                                </div>
                            </div>
-                           <button className="p-2 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700"><Mail className="w-4 h-4" /></button>
+                           
+                           {isAssignedToMe ? (
+                               <a href={`tel:${selectedTask.providerPhone}`} className="p-2 bg-green-600 text-white rounded-full hover:bg-green-500 shadow-lg animate-pulse">
+                                   <Phone className="w-5 h-5" />
+                               </a>
+                           ) : (
+                               <button className="p-2 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700"><Mail className="w-4 h-4" /></button>
+                           )}
                        </div>
                    )}
 
@@ -1084,16 +1181,31 @@ const App = () => {
                {/* Sticky Footer Button */}
                <div className="fixed bottom-0 left-0 w-full p-4 bg-[#0B0F19]/95 backdrop-blur-md border-t border-gray-800 z-50 pb-[env(safe-area-inset-bottom)]">
                    {!isOwner ? (
-                       <button 
-                           onClick={() => !isApplied && handleAcceptTask(selectedTask)} 
-                           disabled={isApplied}
-                           className={`w-full font-bold py-4 rounded-xl shadow-lg transition-all active:scale-[0.98] ${isApplied ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-900/30'}`}
-                       >
-                           {isApplied ? 'Task Applied' : 'Accept Task'}
-                       </button>
+                       // Worker Actions
+                       isAssignedToMe ? (
+                           <div className="flex gap-3">
+                               <a href={`tel:${selectedTask.providerPhone}`} className="flex-1 bg-[#1F2937] text-white font-bold py-4 rounded-xl border border-gray-700 flex items-center justify-center gap-2">
+                                   <PhoneCall className="w-5 h-5" /> Call
+                               </a>
+                               <button 
+                                   onClick={() => setCurrentView('worker-route')}
+                                   className="flex-[2] bg-blue-600 text-white font-bold py-4 rounded-xl shadow-lg flex items-center justify-center gap-2 hover:bg-blue-500"
+                               >
+                                   <NavIcon className="w-5 h-5" /> Get Directions
+                               </button>
+                           </div>
+                       ) : (
+                           <button 
+                               onClick={() => !isApplied && handleAcceptTask(selectedTask)} 
+                               disabled={isApplied}
+                               className={`w-full font-bold py-4 rounded-xl shadow-lg transition-all active:scale-[0.98] ${isApplied ? 'bg-gray-800 text-gray-500 cursor-not-allowed border border-gray-700' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-900/30'}`}
+                           >
+                               {isApplied ? 'Task Applied' : 'Accept Task'}
+                           </button>
+                       )
                    ) : (
                        // Provider Footer Action
-                       selectedTask.status === TaskStatus.IN_PROGRESS ? (
+                       selectedTask.status === TaskStatus.ASSIGNED || selectedTask.status === TaskStatus.IN_PROGRESS ? (
                            <button 
                               onClick={() => { setIsTracking(true); setCurrentView('provider-tracking'); }} 
                               className="w-full font-bold py-4 rounded-xl shadow-lg bg-green-600 text-white hover:bg-green-500 flex items-center justify-center gap-2"
@@ -1239,6 +1351,7 @@ const App = () => {
           {currentView === 'profile' && renderProfile()}
           {currentView === 'notifications' && renderNotifications()}
           {currentView === 'full-map' && renderFullMap()}
+          {currentView === 'worker-route' && renderWorkerRoute()}
           {currentView === 'my-tasks' && renderMyTasks()}
           {currentView === 'provider-active' && renderMyTasks()} 
           {currentView === 'provider-tracking' && renderProviderTracking()}
@@ -1253,7 +1366,7 @@ const App = () => {
           {currentView === 'support' && renderSupport()}
           
           {/* Navigation - Only show on main tabs */}
-          {['dashboard', 'profile', 'my-tasks', 'provider-active'].includes(currentView) && (
+          {['dashboard', 'profile', 'my-tasks', 'provider-active', 'post-task'].includes(currentView) && (
              <Navigation role={user.role} currentView={currentView} onChangeView={setCurrentView} onLogout={handleLogout} />
           )}
       </div>

@@ -1,6 +1,6 @@
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut } from 'firebase/auth';
+import { getAuth, signOut as firebaseSignOut } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { User, UserRole } from '../types';
@@ -35,41 +35,6 @@ if (isConfigured) {
 }
 
 export { auth, db, storage };
-
-export const signInWithGoogle = async (): Promise<{ user: Partial<User>, isNewUser: boolean }> => {
-  if (!auth) throw new Error("Firebase not configured");
-  
-  const provider = new GoogleAuthProvider();
-  try {
-    const result = await signInWithPopup(auth, provider);
-    const user = result.user;
-    
-    // Check if user exists in Firestore
-    const userDocRef = doc(db, 'users', user.uid);
-    const userDoc = await getDoc(userDocRef);
-    
-    if (userDoc.exists()) {
-      return { 
-        user: userDoc.data() as User,
-        isNewUser: false 
-      };
-    } else {
-      // Return basic info for new user signup flow
-      return {
-        user: {
-          id: user.uid,
-          name: user.displayName || '',
-          email: user.email || '',
-          photoURL: user.photoURL || '',
-        },
-        isNewUser: true
-      };
-    }
-  } catch (error) {
-    console.error("Error signing in with Google", error);
-    throw error;
-  }
-};
 
 export const logoutUser = async () => {
   if (!auth) return;
