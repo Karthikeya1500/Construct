@@ -1,9 +1,11 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { User, UserRole, Task, TaskStatus, TaskCategory, AIAnalysisResult, Notification, AppliedWorker } from './types';
-import { INITIAL_TASKS, MOCK_NOTIFICATIONS, MOCK_USER, MOCK_PROVIDER } from './services/mockData';
+import { INITIAL_TASKS, MOCK_NOTIFICATIONS, MOCK_USER } from './services/mockData';
 import { analyzeTaskDescription } from './services/geminiService';
-import { isConfigured } from './services/authService';
+import { auth, db, isConfigured } from './services/authService';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore';
 import Navigation from './components/Navigation';
 import TaskCard from './components/TaskCard';
 import MapVisualizer from './components/MapVisualizer';
@@ -31,6 +33,17 @@ const getGreeting = () => {
   if (hour < 12) return "Good Morning";
   if (hour < 18) return "Good Afternoon";
   return "Good Evening";
+};
+
+const getFirebaseErrorMessage = (error: any) => {
+  const code = error.code;
+  if (code === 'auth/email-already-in-use') return 'Email is already registered.';
+  if (code === 'auth/invalid-email') return 'Invalid email address.';
+  if (code === 'auth/user-not-found') return 'Account not found.';
+  if (code === 'auth/wrong-password') return 'Incorrect password.';
+  if (code === 'auth/weak-password') return 'Password is too weak.';
+  if (code === 'auth/missing-password') return 'Please enter a password.';
+  return error.message || 'Authentication failed. Please try again.';
 };
 
 // --- Shared Components ---
@@ -63,6 +76,7 @@ const InputField = ({ icon: Icon, type, placeholder, value, onChange, label, err
         />
       )}
     </div>
+    {error && <p className="text-red-500 text-xs mt-1 ml-1">{error}</p>}
   </div>
 );
 
@@ -92,32 +106,162 @@ const CategoryPill = ({ label, icon: Icon, active, onClick }: any) => (
 
 // --- Auth Flow ---
 const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }) => {
-  // Steps: login -> signup (form) -> role_selection (cards)
   const [step, setStep] = useState<'login' | 'signup' | 'role_selection'>('login');
-  const [formData, setFormData] = useState({ email: '', password: '', name: '', role: UserRole.WORKER });
+  const [formData, setFormData] = useState({ email: '', password: '', name: '', phone: '' });
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tempUser, setTempUser] = useState<any>(null); // Stores user data temporarily before role selection
 
-  const finalizeSignup = (selectedRole: UserRole) => {
+  const validateInputs = (type: 'login' | 'signup') => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    
+    if (!formData.email.trim()) return "Email is required";
+    if (!emailRegex.test(formData.email)) return "Please enter a valid email address";
+    if (!formData.password) return "Password is required";
+    if (formData.password.length < 6) return "Password must be at least 6 characters";
+
+    if (type === 'signup') {
+      if (!formData.name.trim() || formData.name.length < 2) return "Please enter your full name";
+      if (!formData.phone.trim() || formData.phone.length < 10) return "Please enter a valid phone number";
+    }
+    
+    return null;
+  };
+
+  const handleLogin = async () => {
+    setError(null);
+    const validationError = validateInputs('login');
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     setIsLoading(true);
-    // Simulate API call
-    setTimeout(() => {
-        const newUser: User = {
-            id: 'new-' + Date.now(),
-            name: formData.name || 'New User',
-            email: formData.email || 'user@example.com',
-            role: selectedRole,
-            phone: '',
-            location_lat: 40.7128,
+    try {
+      if (isConfigured && auth) {
+        const userCredential = await signInWithEmailAndPassword(auth, formData.email, formData.password);
+        const uid = userCredential.user.uid;
+        
+        // Fetch user profile to check role
+        const userDoc = await getDoc(doc(db, 'users', uid));
+        
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          if (userData.role) {
+            // Role exists, login complete
+            onComplete({ id: uid, ...userData } as User);
+          } else {
+            // Role missing, redirect to selector
+            setTempUser({ id: uid, ...userData });
+            setStep('role_selection');
+          }
+        } else {
+           // User auth exists but no firestore doc? Treat as new user needing role
+           setTempUser({ id: uid, email: formData.email });
+           setStep('role_selection');
+        }
+      } else {
+        // Mock Mode (Fallback if keys missing in preview)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Simulate strict check in mock mode
+        if (formData.email === 'test@example.com' && formData.password === 'password') {
+            // Mock user has role
+            onComplete(MOCK_USER); 
+        } else {
+            // Simulate finding user but no role or just login success -> select role
+            // For the sake of flow, let's say any other valid login goes to role selection
+            setTempUser({ id: 'mock-id', email: formData.email, name: 'Mock User' });
+            setStep('role_selection');
+        }
+      }
+    } catch (err: any) {
+      setError(getFirebaseErrorMessage(err));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSignup = async () => {
+    setError(null);
+    const validationError = validateInputs('signup');
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      if (isConfigured && auth) {
+        const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+        const uid = userCredential.user.uid;
+        
+        // Create basic user doc WITHOUT role
+        const newUserBase = {
+            id: uid,
+            name: formData.name,
+            email: formData.email,
+            phone: formData.phone,
+            location_lat: 40.7128, // Default to NYC for demo
             location_lng: -74.0060,
             address: 'New User Address',
-            rating: 5.0,
             completedTasks: 0,
-            skills: [],
-            photoURL: `https://ui-avatars.com/api/?name=${formData.name || 'New User'}&background=random`
+            photoURL: `https://ui-avatars.com/api/?name=${formData.name}&background=random`,
+            createdAt: Date.now()
         };
-        onComplete(newUser);
+        
+        await setDoc(doc(db, 'users', uid), newUserBase);
+        
+        setTempUser(newUserBase);
+        setStep('role_selection');
+      } else {
+        // Mock Mode
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const mockNewUser = {
+            id: `mock-${Date.now()}`,
+            name: formData.name,
+            email: formData.email,
+            phone: formData.phone,
+            location_lat: 40.7128,
+            location_lng: -74.0060,
+            address: 'Mock Address',
+            completedTasks: 0,
+            photoURL: `https://ui-avatars.com/api/?name=${formData.name}&background=random`
+        };
+        setTempUser(mockNewUser);
+        setStep('role_selection');
+      }
+    } catch (err: any) {
+      setError(getFirebaseErrorMessage(err));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRoleSelection = async (role: UserRole) => {
+     if (!tempUser) return;
+     setIsLoading(true);
+     
+     try {
+        const finalUser: User = {
+            ...tempUser,
+            role: role,
+            rating: role === UserRole.WORKER ? 5.0 : undefined, // Only workers have ratings initially
+            skills: []
+        };
+
+        if (isConfigured && auth && tempUser.id) {
+            await updateDoc(doc(db, 'users', tempUser.id), { 
+                role: role,
+                rating: role === UserRole.WORKER ? 5.0 : null
+            });
+        }
+
+        onComplete(finalUser);
+     } catch (err: any) {
+        setError("Failed to save role. Please try again.");
+     } finally {
         setIsLoading(false);
-    }, 800);
+     }
   };
 
   // 🧑‍💼 Step 3: Role Selection Screen
@@ -134,8 +278,9 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
 
             <div className="grid gap-6 w-full max-w-sm">
                 <button 
-                    onClick={() => finalizeSignup(UserRole.WORKER)} 
-                    className="group relative p-6 bg-[#1F2937] rounded-2xl border border-gray-700 hover:border-blue-500 transition-all shadow-lg active:scale-95 flex items-center text-left"
+                    onClick={() => handleRoleSelection(UserRole.WORKER)} 
+                    disabled={isLoading}
+                    className="group relative p-6 bg-[#1F2937] rounded-2xl border border-gray-700 hover:border-blue-500 transition-all shadow-lg active:scale-95 flex items-center text-left disabled:opacity-50"
                 >
                     <div className="w-14 h-14 bg-blue-500/10 rounded-full flex items-center justify-center mr-4 group-hover:bg-blue-500/20 transition-colors">
                         <span className="text-2xl">👷</span>
@@ -150,8 +295,9 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
                 </button>
 
                 <button 
-                    onClick={() => finalizeSignup(UserRole.PROVIDER)} 
-                    className="group relative p-6 bg-[#1F2937] rounded-2xl border border-gray-700 hover:border-green-500 transition-all shadow-lg active:scale-95 flex items-center text-left"
+                    onClick={() => handleRoleSelection(UserRole.PROVIDER)} 
+                    disabled={isLoading}
+                    className="group relative p-6 bg-[#1F2937] rounded-2xl border border-gray-700 hover:border-green-500 transition-all shadow-lg active:scale-95 flex items-center text-left disabled:opacity-50"
                 >
                     <div className="w-14 h-14 bg-green-500/10 rounded-full flex items-center justify-center mr-4 group-hover:bg-green-500/20 transition-colors">
                         <span className="text-2xl">🧑‍🔧</span>
@@ -165,6 +311,7 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
                     </div>
                 </button>
             </div>
+            {isLoading && <Loader2 className="w-8 h-8 text-blue-500 animate-spin mt-8" />}
         </div>
      );
   }
@@ -181,18 +328,25 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
                 <p className="text-gray-400 mt-2">Enter your details to get started.</p>
             </div>
             
+            {error && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg mb-4 text-sm font-bold flex items-center">
+                    <AlertTriangle className="w-4 h-4 mr-2" /> {error}
+                </div>
+            )}
+
             <div className="space-y-4">
                 <InputField icon={UserIcon} type="text" placeholder="Full Name" value={formData.name} onChange={(e:any) => setFormData({...formData, name: e.target.value})} />
                 <InputField icon={Mail} type="email" placeholder="Email Address" value={formData.email} onChange={(e:any) => setFormData({...formData, email: e.target.value})} />
+                <InputField icon={Phone} type="tel" placeholder="Phone Number" value={formData.phone} onChange={(e:any) => setFormData({...formData, phone: e.target.value})} />
                 <InputField icon={Lock} type="password" placeholder="Password" value={formData.password} onChange={(e:any) => setFormData({...formData, password: e.target.value})} />
             </div>
             
             <button 
-                onClick={() => setStep('role_selection')} 
-                disabled={!formData.email || !formData.password || !formData.name}
-                className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl mt-8 hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleSignup}
+                disabled={isLoading}
+                className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl mt-8 hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/30 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
             >
-                Create Account
+                {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Create Account'}
             </button>
         </div>
       );
@@ -209,15 +363,25 @@ const AuthFlow: React.FC<{ onComplete: (user: User) => void }> = ({ onComplete }
               <p className="text-gray-400 mt-2">Connect. Work. Earn.</p>
           </div>
 
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg mb-4 text-sm font-bold flex items-center">
+                <AlertTriangle className="w-4 h-4 mr-2" /> {error}
+            </div>
+          )}
+
           <div className="space-y-4 w-full max-w-sm mx-auto">
               <InputField icon={Mail} type="email" placeholder="Email Address" value={formData.email} onChange={(e:any) => setFormData({...formData, email: e.target.value})} />
               <InputField icon={Lock} type="password" placeholder="Password" value={formData.password} onChange={(e:any) => setFormData({...formData, password: e.target.value})} />
               
-              <button onClick={() => onComplete(MOCK_USER)} className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/30">
-                  Log In
+              <button 
+                  onClick={handleLogin}
+                  disabled={isLoading}
+                  className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/30 disabled:opacity-50 flex items-center justify-center"
+              >
+                  {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Log In'}
               </button>
               
-              <p className="mt-8 text-center text-gray-500 text-sm">Don't have an account? <button onClick={() => setStep('signup')} className="text-blue-400 font-bold hover:underline">Sign Up</button></p>
+              <p className="mt-8 text-center text-gray-500 text-sm">Don't have an account? <button onClick={() => { setError(null); setStep('signup'); }} className="text-blue-400 font-bold hover:underline">Sign Up</button></p>
           </div>
       </div>
   );
