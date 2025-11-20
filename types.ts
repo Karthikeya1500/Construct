@@ -1,15 +1,14 @@
 
 export enum UserRole {
-  PROVIDER = 'PROVIDER', // Changed from EMPLOYER
+  PROVIDER = 'PROVIDER',
   WORKER = 'WORKER'
 }
 
 export enum TaskStatus {
   OPEN = 'OPEN',
-  ACCEPTED = 'ACCEPTED',
-  ON_THE_WAY = 'ON_THE_WAY', // New
-  IN_PROGRESS = 'IN_PROGRESS', // New
-  COMPLETED_PENDING_APPROVAL = 'COMPLETED_PENDING_APPROVAL',
+  APPLIED = 'APPLIED',
+  ASSIGNED = 'ASSIGNED',
+  IN_PROGRESS = 'IN_PROGRESS',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED'
 }
@@ -32,22 +31,34 @@ export interface User {
   location_lat: number;
   location_lng: number;
   address: string;
-  rating: number;
+  rating?: number; // Only for workers
   completedTasks: number;
-  skills?: string[]; // Only for workers
+  skills?: string[];
   photoURL?: string;
   bio?: string;
   experienceYears?: number;
   availability?: string;
   certifications?: string[];
+  businessName?: string; // For providers
+}
+
+export interface AppliedWorker {
+  workerId: string;
+  workerName: string;
+  workerPhoto?: string;
+  workerRating: number;
+  skills?: string[];
+  experienceYears?: number;
+  distanceKm?: number;
+  status: 'pending' | 'accepted' | 'rejected';
 }
 
 export interface Task {
   id: string;
   providerId: string;
   providerName: string;
-  providerPhone?: string; // New: For contact after accept
-  providerRating?: number; // New: To show provider trust
+  providerPhone?: string;
+  providerPhoto?: string;
   workerId?: string;
   workerName?: string;
   title: string;
@@ -56,11 +67,13 @@ export interface Task {
   category: TaskCategory;
   location_lat: number;
   location_lng: number;
-  address: string; // Text representation of location
-  distanceKm?: number; // Calculated relative to user
+  address: string;
+  distanceKm?: number;
   status: TaskStatus;
   createdAt: number;
-  date?: string; // ISO string or descriptive text
+  date?: string;
+  applicants?: AppliedWorker[];
+  skills?: string[];
 }
 
 export interface AIAnalysisResult {
@@ -70,4 +83,14 @@ export interface AIAnalysisResult {
   category: TaskCategory;
   date: string | null;
   locationText: string | null;
+  skills?: string[];
+}
+
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  time: string;
+  read: boolean;
+  type: 'info' | 'success' | 'warning' | 'error';
 }

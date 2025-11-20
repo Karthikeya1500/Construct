@@ -1,75 +1,77 @@
 
-import { User } from '../types';
-import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
-import { getStorage } from "firebase/storage";
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut } from 'firebase/auth';
+import { getFirestore, doc, getDoc, setDoc } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
+import { User, UserRole } from '../types';
 
-// --- CONFIGURATION ---
 const firebaseConfig = {
-  apiKey: "AIzaSyB73I1tSRH46CPY6iaMs9K9aXk81sutW6Q",
-  authDomain: "worklink-478409.firebaseapp.com",
-  projectId: "worklink-478409",
-  storageBucket: "worklink-478409.appspot.com",
-  messagingSenderId: "603970167632",
-  appId: "1:603970167632:web:14784d6562594ddbb60255"
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID
 };
 
-export const isConfigured = !!firebaseConfig.apiKey;
+// Check if config is present
+export let isConfigured = !!(process.env.FIREBASE_API_KEY && process.env.FIREBASE_PROJECT_ID);
 
-// --- INITIALIZATION ---
-export let auth: any;
-export let storage: any;
-let googleProvider: any;
+let app;
+let auth: any;
+let db: any;
+let storage: any;
 
-try {
-  if (isConfigured) {
-    const app = initializeApp(firebaseConfig);
+if (isConfigured) {
+  try {
+    app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
     auth = getAuth(app);
-    auth.useDeviceLanguage(); // Use device language for popup
+    db = getFirestore(app);
     storage = getStorage(app);
-
-    googleProvider = new GoogleAuthProvider();
-    googleProvider.setCustomParameters({
-      prompt: 'select_account' // Forces account selection screen
-    });
-
-    console.log("Firebase Initialized. Auth Domain:", firebaseConfig.authDomain);
-    console.log("Current Hostname:", window.location.hostname);
+  } catch (error) {
+    console.error("Firebase initialization error:", error);
+    isConfigured = false;
   }
-} catch (e) {
-  console.error("Firebase Initialization Failed:", e);
 }
 
+export { auth, db, storage };
+
 export const signInWithGoogle = async (): Promise<{ user: Partial<User>, isNewUser: boolean }> => {
-  if (!auth) {
-    throw new Error("auth/configuration-not-found");
-  }
-
+  if (!auth) throw new Error("Firebase not configured");
+  
+  const provider = new GoogleAuthProvider();
   try {
-    console.log("Attempting Google Sign-In...");
-    const result = await signInWithPopup(auth, googleProvider);
-    console.log("Google Sign-In Successful. User:", result.user.email);
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
     
-    const fbUser = result.user;
-    const isNew = fbUser.metadata.creationTime === fbUser.metadata.lastSignInTime;
-
-    return {
-      user: {
-        id: fbUser.uid,
-        name: fbUser.displayName || 'Google User',
-        email: fbUser.email || '',
-        phone: fbUser.phoneNumber || '',
-        photoURL: fbUser.photoURL || '',
-      },
-      isNewUser: isNew
-    };
-  } catch (error: any) {
-    console.error("Google Sign In Error Object:", error);
+    // Check if user exists in Firestore
+    const userDocRef = doc(db, 'users', user.uid);
+    const userDoc = await getDoc(userDocRef);
     
-    if (error.code === 'auth/unauthorized-domain') {
-        console.error(`🚨 DOMAIN ERROR: You must add "${window.location.hostname}" to the Authorized Domains list in Firebase Console -> Authentication -> Settings.`);
+    if (userDoc.exists()) {
+      return { 
+        user: userDoc.data() as User,
+        isNewUser: false 
+      };
+    } else {
+      // Return basic info for new user signup flow
+      return {
+        user: {
+          id: user.uid,
+          name: user.displayName || '',
+          email: user.email || '',
+          photoURL: user.photoURL || '',
+        },
+        isNewUser: true
+      };
     }
-    
+  } catch (error) {
+    console.error("Error signing in with Google", error);
     throw error;
   }
+};
+
+export const logoutUser = async () => {
+  if (!auth) return;
+  await firebaseSignOut(auth);
 };

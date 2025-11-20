@@ -1,6 +1,6 @@
 
-import React, { useMemo } from 'react';
-import { MapPin, Search, Crosshair, Navigation, Car } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { MapPin, Crosshair, Briefcase, Sparkles, Hammer, Truck, Package } from 'lucide-react';
 import { Task } from '../types';
 
 interface MapVisualizerProps {
@@ -11,41 +11,51 @@ interface MapVisualizerProps {
   destinationLng?: number;
   showRoute?: boolean;
   isTrackingMode?: boolean;
+  showUserLocation?: boolean;
   onTaskSelect?: (task: Task) => void;
   onUpdateLocation?: () => void;
-  searchQuery?: string;
-  onSearchChange?: (query: string) => void;
+  fixedRadius?: boolean;
+  activeTask?: Task | null;
 }
 
 const MapVisualizer: React.FC<MapVisualizerProps> = ({ 
-  tasks = [], userLat, userLng, destinationLat, destinationLng, showRoute, isTrackingMode,
-  onTaskSelect, onUpdateLocation, searchQuery, onSearchChange 
+  tasks = [], userLat, userLng, destinationLat, destinationLng, showRoute, isTrackingMode, showUserLocation = true,
+  onTaskSelect, onUpdateLocation, fixedRadius, activeTask
 }) => {
+  const [activeMarkerId, setActiveMarkerId] = useState<string | null>(null);
 
-  // Calculate view bounds based on points
   const viewState = useMemo(() => {
+    // If fixedRadius is true, we center on the user and ignore task bounds
+    if (fixedRadius) {
+        const delta = 0.015; 
+        return {
+            minLat: userLat - delta,
+            maxLat: userLat + delta,
+            minLng: userLng - delta,
+            maxLng: userLng + delta
+        };
+    }
+
     let minLat = userLat, maxLat = userLat;
     let minLng = userLng, maxLng = userLng;
 
-    // Include destination in bounds
     if (destinationLat && destinationLng) {
         minLat = Math.min(minLat, destinationLat);
         maxLat = Math.max(maxLat, destinationLat);
         minLng = Math.min(minLng, destinationLng);
         maxLng = Math.max(maxLng, destinationLng);
+    } else {
+       tasks.forEach(t => {
+          minLat = Math.min(minLat, t.location_lat);
+          maxLat = Math.max(maxLat, t.location_lat);
+          minLng = Math.min(minLng, t.location_lng);
+          maxLng = Math.max(maxLng, t.location_lng);
+       });
     }
 
-    // Include tasks in bounds
-    tasks.forEach(t => {
-        minLat = Math.min(minLat, t.location_lat);
-        maxLat = Math.max(maxLat, t.location_lat);
-        minLng = Math.min(minLng, t.location_lng);
-        maxLng = Math.max(maxLng, t.location_lng);
-    });
-
-    // Add padding
-    const latPadding = (maxLat - minLat) * 0.4 || 0.01; // 40% padding
-    const lngPadding = (maxLng - minLng) * 0.4 || 0.01;
+    // Add some padding around bounds
+    const latPadding = (maxLat - minLat) * 0.3 || 0.005; 
+    const lngPadding = (maxLng - minLng) * 0.3 || 0.005;
 
     return {
         minLat: minLat - latPadding,
@@ -53,124 +63,120 @@ const MapVisualizer: React.FC<MapVisualizerProps> = ({
         minLng: minLng - lngPadding,
         maxLng: maxLng + lngPadding
     };
-  }, [userLat, userLng, destinationLat, destinationLng, tasks]);
+  }, [userLat, userLng, destinationLat, destinationLng, tasks.length, fixedRadius]);
 
-  // Helper to convert lat/lng to % positions
   const getPos = (lat: number, lng: number) => {
       const latRange = viewState.maxLat - viewState.minLat;
       const lngRange = viewState.maxLng - viewState.minLng;
       
-      // Invert Lat because screen Y is top-down
       const top = ((viewState.maxLat - lat) / latRange) * 100; 
       const left = ((lng - viewState.minLng) / lngRange) * 100;
-      
-      return { top: `${Math.max(5, Math.min(95, top))}%`, left: `${Math.max(5, Math.min(95, left))}%` };
+      // Clamp values to ensure they stay vaguely within view for demo purposes
+      return { 
+          top: `${Math.max(-20, Math.min(120, top))}%`, 
+          left: `${Math.max(-20, Math.min(120, left))}%` 
+      };
+  };
+
+  const getCategoryIcon = (category: string) => {
+    switch(category) {
+      case 'Cleaning': return Sparkles;
+      case 'Repair': return Hammer;
+      case 'Shifting': return Truck;
+      case 'Delivery': return Package;
+      default: return Briefcase;
+    }
+  };
+
+  const getCategoryColor = (category: string) => {
+    switch(category) {
+      case 'Cleaning': return 'bg-blue-500 border-blue-400 shadow-blue-500/50';
+      case 'Repair': return 'bg-orange-500 border-orange-400 shadow-orange-500/50';
+      case 'Shifting': return 'bg-purple-500 border-purple-400 shadow-purple-500/50';
+      case 'Delivery': return 'bg-emerald-500 border-emerald-400 shadow-emerald-500/50';
+      default: return 'bg-gray-500 border-gray-400 shadow-gray-500/50';
+    }
   };
 
   const userPos = getPos(userLat, userLng);
   const destPos = (destinationLat && destinationLng) ? getPos(destinationLat, destinationLng) : null;
 
   return (
-    <div className="w-full h-72 bg-[#161f30] rounded-3xl relative overflow-hidden border border-gray-800 shadow-2xl group">
-      
-      {/* Search Bar Overlay */}
-      {onSearchChange && (
-        <div className="absolute top-4 left-4 right-4 z-40">
-          <div className="relative shadow-lg shadow-black/20">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input 
-              type="text" 
-              placeholder="Search location..."
-              value={searchQuery}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className="w-full bg-[#1F2937]/90 backdrop-blur-md border border-gray-700 text-white text-sm rounded-xl pl-10 pr-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+    <div className="w-full h-full bg-[#111827] relative overflow-hidden rounded-inherit group" onClick={() => setActiveMarkerId(null)}>
+      <div className="absolute inset-0 bg-[#111827]">
+          <div className="absolute inset-0 opacity-10" 
+               style={{ 
+                 backgroundImage: 'linear-gradient(#374151 1px, transparent 1px), linear-gradient(90deg, #374151 1px, transparent 1px)', 
+                 backgroundSize: '30px 30px'
+               }}>
           </div>
-        </div>
-      )}
-
-      {/* Update Location Button */}
-      {onUpdateLocation && (
-        <button 
-          onClick={onUpdateLocation}
-          className="absolute bottom-4 right-4 z-40 bg-blue-600 hover:bg-blue-500 text-white p-3 rounded-full shadow-lg shadow-blue-900/40 transition-transform active:scale-90 flex items-center justify-center"
-        >
-          <Crosshair className="w-5 h-5" />
-        </button>
-      )}
-
-      {/* Simulated Map Background */}
-      <div className="absolute inset-0 opacity-20" 
-           style={{ 
-             backgroundImage: 'radial-gradient(#3b82f6 1px, transparent 1px)', 
-             backgroundSize: '24px 24px',
-             backgroundColor: '#0f172a'
-           }}>
       </div>
-
-      {/* Route Line (SVG) */}
+      
+      {/* Route Line */}
       {showRoute && destPos && (
           <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
               <line 
-                x1={userPos.left} 
-                y1={userPos.top} 
-                x2={destPos.left} 
-                y2={destPos.top} 
-                stroke="#3b82f6" 
-                strokeWidth="3" 
-                strokeDasharray="5,5"
-                className="opacity-60 animate-pulse"
+                x1={userPos.left} y1={userPos.top} x2={destPos.left} y2={destPos.top} 
+                stroke="#3b82f6" strokeWidth="3" strokeDasharray="6,4" className="opacity-60 animate-pulse" strokeLinecap="round"
               />
           </svg>
       )}
 
-      {/* User Marker (Worker or Self) */}
-      <div 
-        className="absolute transform -translate-x-1/2 -translate-y-1/2 z-30 flex flex-col items-center transition-all duration-1000 ease-linear"
-        style={{ top: userPos.top, left: userPos.left }}
-      >
-        <div className={`w-8 h-8 ${isTrackingMode ? 'bg-blue-600' : 'bg-blue-500'} rounded-full border-2 border-white shadow-[0_0_20px_rgba(59,130,246,0.6)] flex items-center justify-center relative`}>
-           {isTrackingMode ? <Car className="w-4 h-4 text-white" /> : <div className="w-2 h-2 bg-white rounded-full" />}
-           {isTrackingMode && <div className="absolute -inset-2 bg-blue-500/30 rounded-full animate-ping"></div>}
+      {/* User Marker (or Worker Marker in Tracking Mode) */}
+      {showUserLocation && (
+        <div className="absolute transform -translate-x-1/2 -translate-y-1/2 z-40 transition-all duration-1000 ease-linear" style={{ top: userPos.top, left: userPos.left }}>
+             <div className="relative flex flex-col items-center justify-center">
+                <div className={`w-4 h-4 ${isTrackingMode ? 'bg-green-500' : 'bg-blue-500'} rounded-full border-2 border-white shadow-lg z-20`}></div>
+                <div className={`absolute w-12 h-12 ${isTrackingMode ? 'bg-green-500/30' : 'bg-blue-500/30'} rounded-full animate-pulse z-10`}></div>
+                {isTrackingMode && <div className="absolute -top-8 bg-green-600 text-white text-[10px] font-bold px-2 py-1 rounded shadow-md whitespace-nowrap z-50">Worker Live</div>}
+             </div>
         </div>
-        {isTrackingMode && <span className="mt-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded-md backdrop-blur-sm">Worker</span>}
-      </div>
+      )}
 
-      {/* Destination Marker (Job) */}
+      {/* Destination Marker */}
       {destinationLat && destinationLng && destPos && (
-          <div 
-            className="absolute transform -translate-x-1/2 -translate-y-full z-20 flex flex-col items-center"
-            style={{ top: destPos.top, left: destPos.left }}
-          >
-              <div className="relative">
-                <MapPin className="w-8 h-8 text-red-500 drop-shadow-lg fill-current" />
-                <div className="absolute top-2 left-1/2 -translate-x-1/2 w-2 h-2 bg-black rounded-full"></div>
+          <div className="absolute transform -translate-x-1/2 -translate-y-full z-30" style={{ top: destPos.top, left: destPos.left }}>
+              <div className="bg-red-500 p-1.5 rounded-full border-2 border-white shadow-lg mb-1">
+                <MapPin className="w-5 h-5 text-white fill-current" />
               </div>
-              <span className="bg-red-600/90 text-white text-[10px] font-bold px-2 py-1 rounded-lg shadow-lg mt-1">Job Location</span>
+              <div className="bg-white text-black text-[10px] font-bold px-2 py-0.5 rounded-full shadow-md whitespace-nowrap text-center">Job Location</div>
           </div>
       )}
 
-      {/* Nearby Task Markers (Standard View) */}
+      {/* Job Markers */}
       {tasks.map((task) => {
+        if (destinationLat && Math.abs(destinationLat - task.location_lat) < 0.0001) return null;
+        
         const pos = getPos(task.location_lat, task.location_lng);
+        const isActive = activeMarkerId === task.id || activeTask?.id === task.id;
+        const Icon = getCategoryIcon(task.category);
+        const colorClass = getCategoryColor(task.category);
+        
         return (
           <button
             key={task.id}
-            onClick={(e) => { e.stopPropagation(); onTaskSelect && onTaskSelect(task); }}
-            className="absolute transform -translate-x-1/2 -translate-y-full transition-all hover:scale-125 z-20 group-hover:opacity-100"
+            onClick={(e) => { e.stopPropagation(); setActiveMarkerId(task.id); if (onTaskSelect) onTaskSelect(task); }}
+            className={`absolute transform -translate-x-1/2 -translate-y-full transition-all duration-500 ease-out z-20 hover:z-50 group`}
             style={{ top: pos.top, left: pos.left }}
           >
-            <div className="relative">
-              <MapPin className={`w-8 h-8 ${task.category === 'Cleaning' ? 'text-emerald-400' : 'text-orange-400'} drop-shadow-lg`} fill="currentColor" />
-              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-black/50 rounded-full blur-[2px]"></span>
+            <div className={`relative flex flex-col items-center transition-transform ${isActive ? 'scale-125' : 'scale-100 hover:scale-110'}`}>
+              <div className={`w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-white shadow-lg ${colorClass}`}>
+                 <Icon className="w-4 h-4" />
+              </div>
+              {/* Tooltip */}
+              <div className={`absolute bottom-full mb-2 bg-white text-gray-900 text-[10px] font-bold px-2 py-1 rounded shadow-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none`}>
+                 {task.category} - ${task.budget}
+              </div>
             </div>
           </button>
         );
       })}
       
-      <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-0.5 text-[8px] text-gray-400 rounded backdrop-blur-sm pointer-events-none">
-        © Google Maps Data
-      </div>
+      {onUpdateLocation && !isTrackingMode && (
+        <button onClick={(e) => { e.stopPropagation(); onUpdateLocation(); }} className="absolute bottom-4 right-4 bg-white text-gray-900 p-3 rounded-full shadow-xl hover:bg-gray-100 active:scale-90 transition-transform z-50 border border-gray-200">
+            <Crosshair className="w-5 h-5 text-blue-600" />
+        </button>
+      )}
     </div>
   );
 };

@@ -4,7 +4,15 @@ import { AIAnalysisResult, TaskCategory } from '../types';
 
 // Helper to sanitize JSON strings if they contain markdown code blocks
 const cleanJsonString = (text: string): string => {
-  return text.replace(/```json\n?|\n?```/g, '').trim();
+  // Remove markdown code blocks
+  let cleaned = text.replace(/```json\n?|\n?```/g, '').trim();
+  // Sometimes model might output text before/after json, try to extract valid json object
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  }
+  return cleaned;
 };
 
 export const analyzeTaskDescription = async (promptText: string): Promise<AIAnalysisResult | null> => {
@@ -12,14 +20,19 @@ export const analyzeTaskDescription = async (promptText: string): Promise<AIAnal
     // Use process.env.API_KEY exclusively as per guidelines
     if (!process.env.API_KEY) {
       console.warn("API Key not found. Returning mock data for demo purposes.");
+      
+      // Simulate delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
       // Fallback mock data if no key provided
       return {
-        title: "Task based on description",
+        title: "Task from: " + promptText.substring(0, 20) + "...",
         description: promptText,
-        budget: null,
+        budget: 50,
         category: TaskCategory.OTHER,
-        date: null,
-        locationText: null
+        date: "This Weekend",
+        locationText: "123 Main St, Downtown",
+        skills: ["General Help", "Communication"]
       };
     }
 
@@ -27,25 +40,30 @@ export const analyzeTaskDescription = async (promptText: string): Promise<AIAnal
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: `Extract structured task data from the user description.
+      contents: `You are an AI assistant for a gig marketplace app. 
+      Extract structured task data from the user's raw description.
+      
+      User Description: "${promptText}"
+      
+      Task:
+      1. Create a catchy Title.
+      2. Write a professional Description.
+      3. Estimate a fair Budget in USD (if not specified, estimate based on market rates for such a task).
+      4. Select the best Category.
+      5. Suggest a Date/Time (e.g., "This Weekend", "ASAP", or specific date if mentioned).
+      6. List 2-4 required Skills for this job.
+      7. Extract or suggest a location/address if mentioned, otherwise leave generic or null.
       
       Return a JSON object STRICTLY matching this schema:
       {
         "title": string,
         "description": string,
-        "budget": number | null,
+        "budget": number,
         "category": "Cleaning" | "Shifting" | "Helper" | "Repair" | "Delivery" | "Other",
-        "date": string | null,
-        "locationText": string | null
-      }
-
-      Rules:
-      1. If budget is not mentioned, set "budget" to null.
-      2. If date is not mentioned, set "date" to null.
-      3. If location is not mentioned, set "locationText" to null.
-      4. Infer the best "category" from the list.
-      
-      User Description: "${promptText}"`,
+        "date": string,
+        "locationText": string | null,
+        "skills": string[]
+      }`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -53,31 +71,37 @@ export const analyzeTaskDescription = async (promptText: string): Promise<AIAnal
           properties: {
             title: { type: Type.STRING },
             description: { type: Type.STRING },
-            budget: { type: Type.NUMBER, nullable: true },
+            budget: { type: Type.NUMBER },
             category: { type: Type.STRING, enum: Object.values(TaskCategory) },
-            date: { type: Type.STRING, nullable: true },
-            locationText: { type: Type.STRING, nullable: true }
+            date: { type: Type.STRING },
+            locationText: { type: Type.STRING, nullable: true },
+            skills: { 
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
+            }
           },
-          required: ["title", "description", "category"]
+          required: ["title", "description", "budget", "category", "date", "skills"]
         }
       }
     });
 
     const text = response.text;
-    if (!text) return null;
+    if (!text) throw new Error("Empty response from AI");
     
-    return JSON.parse(cleanJsonString(text)) as AIAnalysisResult;
+    const parsed = JSON.parse(cleanJsonString(text));
+    return parsed as AIAnalysisResult;
 
   } catch (error) {
     console.error("Gemini API Error:", error);
-    // Fallback on error
+    // Fallback on error to prevent app crash
     return {
       title: "New Request",
       description: promptText,
-      budget: null,
+      budget: 0,
       category: TaskCategory.OTHER,
       date: null,
-      locationText: null
+      locationText: null,
+      skills: []
     };
   }
 };
